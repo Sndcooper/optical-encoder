@@ -1,11 +1,28 @@
-#include <Arduino.h>
+/*
+================================================================================
+PROJECT: Optical Encoder I2C Slave Module
+FILE: opticalEncoderI2CSlave.cpp
+DESCRIPTION: This firmware implements an I2C slave interface for an optical
+encoder system. The microcontroller reads pulses from an optical encoder via
+interrupt pin and calculates speed/RPM values. It communicates with an I2C
+master (e.g., Raspberry Pi) via Wire protocol, sending calculated speed data
+upon request. The system features debouncing, moving average filtering for
+smooth speed readings, and efficient interrupt-driven pulse counting with
+atomic operations to prevent race conditions between interrupt and main loop.
+================================================================================
+*/
 
+#include <Arduino.h>
+#include <Wire.h>
+
+#define I2C_SLAVE_ADDR 0x01
 // --- Hardware Mapping ---
 #define PIN_ENC 13 // Interrupt input pin
-
+// Variable to send
+int finalSpeed = 0;
 // --- Calculation Constants ---
 const int PULSES_PER_REV = 128; // Change this based on your specific encoder
-const int UPDATE_INTERVAL_MS = 50; // Printing every 100ms is easier to read than 20ms
+const int UPDATE_INTERVAL_MS = 1000/60; 
 
 // --- Global Variables ---
 volatile uint32_t pulseCount = 0;
@@ -34,6 +51,15 @@ void IRAM_ATTR handleEncoder() {
   }
 }
 
+void onRequest(){
+  // When Pi requests data, send the counter value
+  // We send it as a string for easy decoding in Python, 
+  // or you can send raw bytes.
+  Wire.print("speed:"); 
+  Wire.print(finalSpeed);
+  Wire.print("\n"); // End of line character
+}
+
 void setup() {
     Serial.begin(115200);
     
@@ -42,6 +68,14 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(PIN_ENC), handleEncoder, RISING);
 
     Serial.println("--- Serial Monitor Encoder Started ---");
+    // Initialize I2C as Slave with address 0x01
+    // Default pins: SDA=21, SCL=22
+    Wire.begin(I2C_SLAVE_ADDR); 
+    
+    // Register the function to call when Master asks for data
+    Wire.onRequest(onRequest);
+    
+    Serial.println("I2C Slave Ready");
 }
 
 void loop() {
@@ -96,7 +130,8 @@ void loop() {
         Serial.print(avgKPH, 4);
 
         Serial.println();
-        
+        speedKPH = abs(speedKPH);
+        finalSpeed = static_cast<int>(speedKPH); // Update the variable to send via I2C
         lastUpdateTime = currentTime;
     }
 }
